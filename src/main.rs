@@ -1,4 +1,4 @@
-use cocoa::appkit::{NSApp, NSApplication, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem};
+use cocoa::appkit::{NSApp, NSApplication, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSButton, NSApplicationActivationPolicy};
 use cocoa::base::{id, nil, YES};
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 use objc::{msg_send, sel, sel_impl};
@@ -23,7 +23,7 @@ fn create_status_item() -> id {
         let status_bar = NSStatusBar::systemStatusBar(nil);
         let status_item = status_bar.statusItemWithLength_(-1.0);
         let title = NSString::alloc(nil).init_str("☰");
-        let button = msg_send![status_item, button];
+        let button: id = msg_send![status_item, button];
         let _: () = msg_send![button, setTitle:title];
         status_item.setMenu_(create_menu());
         status_item
@@ -34,7 +34,7 @@ fn main() {
     unsafe {
         let _pool = NSAutoreleasePool::new(nil);
         let app = NSApplication::sharedApplication(nil);
-        app.setActivationPolicy_(0);
+        app.setActivationPolicy_(NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular);
 
         let _status_item = create_status_item();
 

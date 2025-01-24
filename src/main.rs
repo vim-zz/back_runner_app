@@ -1,4 +1,7 @@
-use cocoa::appkit::{NSApp, NSApplication, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSButton, NSApplicationActivationPolicy};
+use cocoa::appkit::{
+    NSApp, NSApplication, NSApplicationActivationPolicy, NSButton, NSMenu, NSMenuItem, NSStatusBar,
+    NSStatusItem,
+};
 use cocoa::base::{id, nil, YES};
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 use objc::{msg_send, sel, sel_impl};
@@ -11,8 +14,11 @@ fn create_menu() -> id {
     unsafe {
         let menu = NSMenu::new(nil).autorelease();
         let title = NSString::alloc(nil).init_str("Quit");
-        let quit_item = NSMenuItem::alloc(nil)
-            .initWithTitle_action_keyEquivalent_(title, sel!(terminate:), NSString::alloc(nil).init_str("q"));
+        let quit_item = NSMenuItem::alloc(nil).initWithTitle_action_keyEquivalent_(
+            title,
+            sel!(terminate:),
+            NSString::alloc(nil).init_str("q"),
+        );
         menu.addItem_(quit_item);
         menu
     }
@@ -34,7 +40,9 @@ fn main() {
     unsafe {
         let _pool = NSAutoreleasePool::new(nil);
         let app = NSApplication::sharedApplication(nil);
-        app.setActivationPolicy_(NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular);
+        app.setActivationPolicy_(
+            NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+        );
 
         let _status_item = create_status_item();
 

@@ -1,17 +1,22 @@
+use std::ffi::OsStr;
 use cocoa::appkit::{
     NSApplication, NSApplicationActivationPolicy, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
 };
 use cocoa::base::{id, nil, BOOL, NO, YES};
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 use objc::declare::ClassDecl;
-use objc::runtime::{self, Class, Object, Sel};
+use objc::runtime::{Class, Object, Sel};
 use objc::{class, msg_send, sel, sel_impl};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::collections::HashMap;
+use log::{info, error, warn, debug};
+use oslog;
+
+const PATH: &str = "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin";
 
 #[derive(Clone)]
 struct TunnelCommand {
@@ -23,12 +28,12 @@ struct TunnelCommand {
 
 static TUNNEL_PROCESS: AtomicBool = AtomicBool::new(false);
 static mut COMMANDS_CONFIG: Option<Arc<Mutex<HashMap<String, TunnelCommand>>>> = None;
+
 #[no_mangle]
 extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
-    println!("toggleTunnel called!");
     unsafe {
         let state: BOOL = msg_send![item, state];
-        println!("Current state: {}", state == YES);
+        debug!("Current state: {}", state == YES);
 
         // Get command identifier from the menu item
         let command_id: id = msg_send![item, representedObject];
@@ -44,44 +49,65 @@ extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
         let commands_config = COMMANDS_CONFIG.as_ref().unwrap().clone();
 
         if new_state == YES {
-            println!("Starting command for {}", command_key);
+            debug!("Starting `{}`", command_key);
             TUNNEL_PROCESS.store(true, Ordering::SeqCst);
+
             thread::spawn(move || {
-                while TUNNEL_PROCESS.load(Ordering::SeqCst) {
+                let mut attempts = 0;
+                while TUNNEL_PROCESS.load(Ordering::SeqCst) && attempts < 5 {
                     let command = {
                         let config = commands_config.lock().unwrap();
                         config.get(&command_key).unwrap().clone()
                     };
-                    println!("Spawning command: {} {:?}", command.command, command.args);
+                    info!("Spawning command: {} {:?} ({attempts} attempt) ", command.command, command.args);
+
+                    // Update path to include /usr/local/bin (aws cli)
+                    let mut cmd = Command::new(&command.command);
+                    let new_path = cmd.get_envs()
+                        .find(|(key, _)| key == &OsStr::new("PATH"))
+                        .map(|(_, value)| {
+                            value.map(|path| {format!("{PATH}:{}", path.to_string_lossy())})
+                        })
+                        .flatten()
+                        .unwrap_or(PATH.to_string());
+                    debug!("Update PATH to: {new_path}");
+                    cmd.env("PATH", new_path);
 
                     // Blocking call
-                    match Command::new(&command.command)
+                    match cmd
                         .args(&command.args)
                         .spawn() {
                             Ok(mut child) => {
-                                println!("Process started");
+                                info!("Process started");
                                 let _ = child.wait();
                             },
-                            Err(e) => println!("Failed to start command: {e}"),
+                            Err(e) => error!("Failed to start command: {e}"),
                     }
-                    println!("Done");
+                    debug!("Done");
+                    attempts += 1;
+                }
+
+                if attempts == 5 {
+                    warn!("Failed to start command after 5 attempts");
                 }
             });
+
         } else {
             TUNNEL_PROCESS.store(false, Ordering::SeqCst);
+
             let command = {
                 let config = commands_config.lock().unwrap();
                 config.get(&command_key).unwrap().clone()
             };
-            println!("Stopping command: {} {:?}", command.command, command.args);
+            info!("Stopping command: {} {:?}", command.command, command.args);
 
             match Command::new(&command.kill_command)
                 .args(&command.kill_args)
                 .output() {
-                    Ok(_) => println!("Process stopped"),
-                    Err(e) => println!("Failed to stop process: {e}"),
+                    Ok(_) => debug!("Process stopped"),
+                    Err(e) => error!("Failed to stop process: {e}"),
             }
-            println!("Done");
+            debug!("Done");
         }
     }
 }
@@ -156,6 +182,13 @@ fn create_status_item() -> id {
 }
 
 fn main() {
+    // Initialize the logger at the start of main
+    oslog::OsLogger::new("com.1000ants.menubarapp")
+        .level_filter(log::LevelFilter::Debug) // Set logging level
+        .init()
+        .unwrap();
+
+    info!("Application starting up"); // This will show in Console.app
     let mut commands = HashMap::new();
 
     // Add PROD configuration

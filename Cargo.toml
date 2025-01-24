@@ -8,6 +8,8 @@ cocoa = "0.26"
 objc = "0.2"
 core-foundation = "0.10"
 libc = "0.2"
+log = "0.4"
+oslog = "0.2"
 
 # [lints.rust]
 # unexpected_cfgs = { level = "warn", check-cfg = ['cfg(cargo-clippy)'] }

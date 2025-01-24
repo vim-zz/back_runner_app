@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cocoa = "0.24"
+cocoa = "0.26"
 objc = "0.2"
-core-foundation = "0.9"
+core-foundation = "0.10"
 libc = "0.2"
 
 # [lints.rust]

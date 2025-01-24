@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Configuration
-APP_NAME="MenubarApp"
-IDENTIFIER="com.1000ants.menubarapp"
-RELEASE_BUILD="target/release/menu_bar_runner3"
+APP_NAME="BackRunner"
+IDENTIFIER="com.1000Ants.BackRunner"
+RELEASE_BUILD="target/release/BackRunner"
 
 # Create app bundle structure
 APP_BUNDLE="$APP_NAME.app"

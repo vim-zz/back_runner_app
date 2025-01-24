@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use log::{info, error, warn, debug};
 use oslog;
 
@@ -28,6 +28,7 @@ struct TunnelCommand {
 
 static TUNNEL_PROCESS: AtomicBool = AtomicBool::new(false);
 static mut COMMANDS_CONFIG: Option<Arc<Mutex<HashMap<String, TunnelCommand>>>> = None;
+static mut ACTIVE_TUNNELS: Option<Arc<Mutex<HashSet<String>>>> = None;
 
 #[no_mangle]
 extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
@@ -47,14 +48,24 @@ extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
         let _: () = msg_send![item, setState:new_state];
 
         let commands_config = COMMANDS_CONFIG.as_ref().unwrap().clone();
+        let active_tunnels = ACTIVE_TUNNELS.as_ref().unwrap().clone();
 
         if new_state == YES {
             debug!("Starting `{}`", command_key);
-            TUNNEL_PROCESS.store(true, Ordering::SeqCst);
+
+            {
+                let mut tunnels = active_tunnels.lock().unwrap();
+                tunnels.insert(command_key.clone());
+            }
 
             thread::spawn(move || {
                 let mut attempts = 0;
-                while TUNNEL_PROCESS.load(Ordering::SeqCst) && attempts < 5 {
+                let is_tunnel_active = || {
+                    let tunnels = active_tunnels.lock().unwrap();
+                    tunnels.contains(&command_key)
+                };
+
+                while is_tunnel_active() && attempts < 5 {
                     let command = {
                         let config = commands_config.lock().unwrap();
                         config.get(&command_key).unwrap().clone()
@@ -93,7 +104,10 @@ extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
             });
 
         } else {
-            TUNNEL_PROCESS.store(false, Ordering::SeqCst);
+            {
+                let mut tunnels = active_tunnels.lock().unwrap();
+                tunnels.remove(&command_key);
+            }
 
             let command = {
                 let config = commands_config.lock().unwrap();
@@ -122,16 +136,18 @@ fn register_selector() -> *const Class {
             toggleTunnel as extern "C" fn(&Object, Sel, id)
         );
 
+        decl.add_method(
+            sel!(applicationWillTerminate:),
+            applicationWillTerminate as extern "C" fn(&Object, Sel, id)
+        );
+
         decl.register()
     }
 }
 
-fn create_menu() -> id {
+fn create_menu(handler: id) -> id {
     unsafe {
         let menu = NSMenu::new(nil).autorelease();
-
-        let handler_class = register_selector();
-        let handler: id = msg_send![handler_class, new];
 
         // Create menu items
         let prod_item = create_menu_item(handler, "Open tunnel PROD", "prod");
@@ -169,15 +185,46 @@ fn create_menu_item(handler: id, title: &str, command_id: &str) -> id {
     }
 }
 
-fn create_status_item() -> id {
+fn create_status_item(handler: id) -> id {  // Modified to accept handler as parameter
     unsafe {
         let status_bar = NSStatusBar::systemStatusBar(nil);
         let status_item = status_bar.statusItemWithLength_(-1.0);
         let title = NSString::alloc(nil).init_str("☰");
         let button: id = msg_send![status_item, button];
         let _: () = msg_send![button, setTitle:title];
-        status_item.setMenu_(create_menu());
+        status_item.setMenu_(create_menu(handler));
         status_item
+    }
+}
+
+#[no_mangle]
+extern "C" fn applicationWillTerminate(_: &Object, _: Sel, _notification: id) {
+    info!("Application is terminating, cleaning up tunnels");
+    cleanup_tunnels();
+}
+
+fn cleanup_tunnels() {
+    unsafe {
+        if let Some(commands_config) = COMMANDS_CONFIG.as_ref() {
+            if let Some(active_tunnels) = ACTIVE_TUNNELS.as_ref() {
+                let mut tunnels = active_tunnels.lock().unwrap();
+                let config = commands_config.lock().unwrap();
+
+                // Clear all active tunnels first to stop any running threads
+                for key in tunnels.iter() {
+                    debug!("Cleaning up tunnel for {}", key);
+                    if let Some(command) = config.get(key) {
+                        match Command::new(&command.kill_command)
+                            .args(&command.kill_args)
+                            .output() {
+                                Ok(_) => debug!("Process stopped for {}", key),
+                                Err(e) => error!("Failed to stop process for {}: {}", key, e),
+                        }
+                    }
+                }
+                tunnels.clear(); // Clear all active tunnels
+            }
+        }
     }
 }
 
@@ -215,13 +262,29 @@ fn main() {
 
     unsafe {
         COMMANDS_CONFIG = Some(Arc::new(Mutex::new(commands)));
+        ACTIVE_TUNNELS = Some(Arc::new(Mutex::new(HashSet::new())));
 
         let _pool = NSAutoreleasePool::new(nil);
         let app = NSApplication::sharedApplication(nil);
         app.setActivationPolicy_(
             NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
         );
-        let _status_item = create_status_item();
+
+        // Create handler once
+        let handler_class = register_selector();
+        let handler: id = msg_send![handler_class, new];
+
+        // Create status item with handler
+        let _status_item = create_status_item(handler);
+
+        // Register for termination notification
+        let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+        let _: () = msg_send![notification_center,
+            addObserver:handler
+            selector:sel!(applicationWillTerminate:)
+            name:NSString::alloc(nil).init_str("NSApplicationWillTerminateNotification")
+            object:nil];
+
         app.run();
     }
 }

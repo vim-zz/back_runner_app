@@ -1,11 +1,9 @@
 use cocoa::appkit::{
-    NSApp, NSApplication, NSApplicationActivationPolicy, NSButton, NSMenu, NSMenuItem, NSStatusBar,
-    NSStatusItem,
+    NSApplication, NSApplicationActivationPolicy, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
 };
-use cocoa::base::{id, nil, YES};
+use cocoa::base::{id, nil};
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 use objc::{msg_send, sel, sel_impl};
-use std::ptr;
 
 #[macro_use]
 extern crate objc;

@@ -1,0 +1,9 @@
+[package]
+name = "menu_bar_runner3"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cocoa = "0.24"
+objc = "0.2"
+core-foundation = "0.9"

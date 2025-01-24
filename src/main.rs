@@ -39,7 +39,7 @@ fn main() {
         let _pool = NSAutoreleasePool::new(nil);
         let app = NSApplication::sharedApplication(nil);
         app.setActivationPolicy_(
-            NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+            NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
         );
 
         let _status_item = create_status_item();

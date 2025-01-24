@@ -7,6 +7,7 @@ edition = "2021"
 cocoa = "0.24"
 objc = "0.2"
 core-foundation = "0.9"
+libc = "0.2"
 
 # [lints.rust]
 # unexpected_cfgs = { level = "warn", check-cfg = ['cfg(cargo-clippy)'] }

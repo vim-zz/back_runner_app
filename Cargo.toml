@@ -1,5 +1,5 @@
 [package]
-name = "BackRunner"
+name = "back_runner"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,6 +10,12 @@ core-foundation = "0.10"
 libc = "0.2"
 log = "0.4"
 oslog = "0.2"
+
+# Mac App Bundle configuration for the `cargo bundle` command
+[package.metadata.bundle]
+name = "BackRunner"
+identifier = "com.1000ants.backrunner"
+icon = ["resources/rocket.icns"]
 
 # [lints.rust]
 # unexpected_cfgs = { level = "warn", check-cfg = ['cfg(cargo-clippy)'] }

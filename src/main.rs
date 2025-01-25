@@ -1,85 +1,69 @@
+// src/main.rs
+//
+// The main entry point. We keep macOS-specific setup code here (NSApplication, run loop).
+// We also define the global reference `GLOBAL_APP` so that the toggleTunnel function can
+// look up the instance of `App` easily. Alternatively, you can store the `App` reference
+// inside the Objective-C handler class.
+
 use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
 use cocoa::base::{id, nil};
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 use log::info;
 use objc::runtime::{Object, Sel};
 use objc::{class, msg_send, sel, sel_impl};
-use oslog;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::OnceLock;
 
+mod app;
+mod logger;
 mod menu;
 mod tunnel;
 
-use menu::{create_status_item, register_selector};
-use tunnel::cleanup_tunnels;
-use tunnel::TunnelCommand;
-use tunnel::{ACTIVE_TUNNELS, COMMANDS_CONFIG};
+// Expose the global App so that `toggleTunnel` can access it.
+// This is just an example—there are alternative approaches for bridging
+// global state to an Objective-C selector.
+pub static GLOBAL_APP: OnceLock<app::App> = OnceLock::new();
 
 #[no_mangle]
 extern "C" fn applicationWillTerminate(_: &Object, _: Sel, _notification: id) {
-    info!("Application is terminating, cleaning up tunnels");
-    cleanup_tunnels();
+    info!("Application is terminating; cleaning up tunnels...");
+    if let Some(app) = GLOBAL_APP.get() {
+        app.cleanup_tunnels();
+    }
 }
 
+/// The main function: sets up Cocoa, the app, logger, menu, etc.
 fn main() {
-    // Initialize the logger at the start of main
-    oslog::OsLogger::new("com.1000ants.menubarapp")
-        .level_filter(log::LevelFilter::Debug) // Set logging level
-        .init()
-        .unwrap();
+    // 1. Initialize the logger
+    logger::init_logger();
+    info!("Application starting up");
 
-    info!("Application starting up"); // This will show in Console.app
-    let mut commands = HashMap::new();
-
-    // Add PROD configuration
-    commands.insert(
-        "prod".to_string(),
-        TunnelCommand {
-            command: "ssh".to_string(),
-            args: vec!["-N".to_string(), "lb-prod.rds".to_string()],
-            kill_command: "pkill".to_string(),
-            kill_args: vec!["-f".to_string(), "lb-prod.rds".to_string()],
-        },
-    );
-
-    // Add DEV configuration
-    commands.insert(
-        "dev-01".to_string(),
-        TunnelCommand {
-            command: "ssh".to_string(),
-            args: vec!["-N".to_string(), "lb-dev-01.rds".to_string()],
-            kill_command: "pkill".to_string(),
-            kill_args: vec!["-f".to_string(), "lb-dev-01.rds".to_string()],
-        },
-    );
+    // 2. Create the application data
+    let my_app = app::App::new();
+    GLOBAL_APP.set(my_app).ok().unwrap();
 
     unsafe {
-        COMMANDS_CONFIG = Some(Arc::new(Mutex::new(commands)));
-        ACTIVE_TUNNELS = Some(Arc::new(Mutex::new(HashSet::new())));
-
+        // 3. Cocoa setup
         let _pool = NSAutoreleasePool::new(nil);
         let app = NSApplication::sharedApplication(nil);
-        app.setActivationPolicy_(
-            NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
-        );
+        app.setActivationPolicy_(NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory);
 
-        // Create handler once
-        let handler_class = register_selector();
+        // 4. Create the handler (Objective-C class) for menu events
+        let handler_class = menu::register_selector();
         let handler: id = msg_send![handler_class, new];
 
-        // Create status item with handler
-        let _status_item = create_status_item(handler);
+        // 5. Create the status bar item with attached menu
+        let _status_item = menu::create_status_item(handler);
 
-        // Register for termination notification
+        // 6. Observe application termination
         let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
         let _: () = msg_send![notification_center,
-            addObserver:handler
-            selector:sel!(applicationWillTerminate:)
-            name:NSString::alloc(nil).init_str("NSApplicationWillTerminateNotification")
-            object:nil];
+            addObserver: handler
+            selector: sel!(applicationWillTerminate:)
+            name: NSString::alloc(nil).init_str("NSApplicationWillTerminateNotification")
+            object: nil
+        ];
 
+        // 7. Run the main application loop
         app.run();
     }
 }

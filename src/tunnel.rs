@@ -1,15 +1,20 @@
+// src/tunnel.rs
+//
+// Contains the logic related to creating, toggling, and cleaning up tunnels.
+// We define a `TunnelManager` struct to encapsulate the logic that was previously
+// in static variables and top-level functions.
+
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::thread;
+
 use cocoa::base::{id, BOOL, NO, YES};
 use cocoa::foundation::NSString;
 use log::{debug, error, info, warn};
 use objc::runtime::{Object, Sel};
 use objc::{msg_send, sel, sel_impl};
-use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
-use std::process::Command;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::thread;
 
 const PATH: &str = "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin";
 
@@ -21,57 +26,47 @@ pub struct TunnelCommand {
     pub kill_args: Vec<String>,
 }
 
-static TUNNEL_PROCESS: AtomicBool = AtomicBool::new(false);
-pub static mut COMMANDS_CONFIG: Option<Arc<Mutex<HashMap<String, TunnelCommand>>>> = None;
-pub static mut ACTIVE_TUNNELS: Option<Arc<Mutex<HashSet<String>>>> = None;
+/// Manages the lifecycle of tunnels (start, stop, cleanup).
+/// Replaces the global static variables with owned fields.
+pub struct TunnelManager {
+    pub commands_config: Arc<Mutex<HashMap<String, TunnelCommand>>>,
+    pub active_tunnels: Arc<Mutex<HashSet<String>>>,
+}
 
-#[no_mangle]
-pub extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
-    unsafe {
-        let state: BOOL = msg_send![item, state];
-        debug!("Current state: {}", state == YES);
-
-        // Get command identifier from the menu item
-        let command_id: id = msg_send![item, representedObject];
-        let command_str = NSString::UTF8String(command_id);
-        let command_key = std::ffi::CStr::from_ptr(command_str)
-            .to_string_lossy()
-            .into_owned();
-
-        // Toggle state
-        let new_state = if state == YES { NO } else { YES };
-        let _: () = msg_send![item, setState:new_state];
-
-        let commands_config = COMMANDS_CONFIG.as_ref().unwrap().clone();
-        let active_tunnels = ACTIVE_TUNNELS.as_ref().unwrap().clone();
-
-        if new_state == YES {
-            debug!("Starting `{}`", command_key);
-
+impl TunnelManager {
+    /// Toggles a tunnel by name (command_key) on or off.
+    /// If turning on, spawns a thread to run the SSH command.
+    /// If turning off, kills the process.
+    pub fn toggle(&self, command_key: &str, enable: bool) {
+        if enable {
+            // Mark tunnel active
             {
-                let mut tunnels = active_tunnels.lock().unwrap();
-                tunnels.insert(command_key.clone());
+                let mut tunnels = self.active_tunnels.lock().unwrap();
+                tunnels.insert(command_key.to_owned());
             }
+
+            // Spawn thread
+            let commands_config = self.commands_config.clone();
+            let active_tunnels = self.active_tunnels.clone();
+            let command_key = command_key.to_owned();
 
             thread::spawn(move || {
                 let mut attempts = 0;
-                let is_tunnel_active = || {
+                let is_active = || {
                     let tunnels = active_tunnels.lock().unwrap();
                     tunnels.contains(&command_key)
                 };
 
-                while is_tunnel_active() && attempts < 5 {
+                while is_active() && attempts < 5 {
                     let command = {
-                        let config = commands_config.lock().unwrap();
-                        config.get(&command_key).unwrap().clone()
+                        let cfg = commands_config.lock().unwrap();
+                        cfg.get(&command_key).unwrap().clone()
                     };
-                    info!(
-                        "Spawning command: {} {:?} ({attempts} attempt) ",
-                        command.command, command.args
-                    );
 
-                    // Update path to include /usr/local/bin (aws cli)
+                    info!("Spawning command: {} {:?} (attempt {})", command.command, command.args, attempts);
+
                     let mut cmd = Command::new(&command.command);
+                    // Update PATH to include /usr/local/bin
                     let new_path = cmd
                         .get_envs()
                         .find(|(key, _)| key == &OsStr::new("PATH"))
@@ -79,19 +74,19 @@ pub extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
                             value.map(|path| format!("{PATH}:{}", path.to_string_lossy()))
                         })
                         .flatten()
-                        .unwrap_or(PATH.to_string());
+                        .unwrap_or_else(|| PATH.to_string());
+
                     debug!("Update PATH to: {new_path}");
                     cmd.env("PATH", new_path);
 
-                    // Blocking call
                     match cmd.args(&command.args).spawn() {
                         Ok(mut child) => {
-                            info!("Process started");
+                            info!("Tunnel process started");
                             let _ = child.wait();
                         }
-                        Err(e) => error!("Failed to start command: {e}"),
+                        Err(e) => error!("Failed to start tunnel command: {}", e),
                     }
-                    debug!("Done");
+
                     attempts += 1;
                 }
 
@@ -100,51 +95,74 @@ pub extern "C" fn toggleTunnel(_: &Object, _: Sel, item: id) {
                 }
             });
         } else {
+            // Remove from active set
             {
-                let mut tunnels = active_tunnels.lock().unwrap();
-                tunnels.remove(&command_key);
+                let mut tunnels = self.active_tunnels.lock().unwrap();
+                tunnels.remove(command_key);
             }
 
-            let command = {
-                let config = commands_config.lock().unwrap();
-                config.get(&command_key).unwrap().clone()
+            // Kill the process
+            let cmd_data = {
+                let cfg = self.commands_config.lock().unwrap();
+                cfg.get(command_key).unwrap().clone()
             };
-            info!("Stopping command: {} {:?}", command.command, command.args);
 
-            match Command::new(&command.kill_command)
-                .args(&command.kill_args)
-                .output()
-            {
-                Ok(_) => debug!("Process stopped"),
-                Err(e) => error!("Failed to stop process: {e}"),
+            info!("Stopping command: {} {:?}", cmd_data.command, cmd_data.args);
+            match Command::new(&cmd_data.kill_command).args(&cmd_data.kill_args).output() {
+                Ok(_) => debug!("Tunnel stopped successfully"),
+                Err(e) => error!("Failed to stop tunnel process: {}", e),
             }
-            debug!("Done");
         }
+    }
+
+    /// Cleans up all tunnels when the app terminates.
+    pub fn cleanup(&self) {
+        let config = self.commands_config.lock().unwrap();
+        let mut active = self.active_tunnels.lock().unwrap();
+
+        for key in active.iter() {
+            debug!("Cleaning up tunnel: {}", key);
+            if let Some(cmd_data) = config.get(key) {
+                match Command::new(&cmd_data.kill_command).args(&cmd_data.kill_args).output() {
+                    Ok(_) => debug!("Process stopped for {}", key),
+                    Err(e) => error!("Failed to stop process for {}: {}", key, e),
+                }
+            }
+        }
+
+        // Clear all active
+        active.clear();
+        debug!("All tunnels cleaned up");
     }
 }
 
-pub fn cleanup_tunnels() {
-    unsafe {
-        if let Some(commands_config) = COMMANDS_CONFIG.as_ref() {
-            if let Some(active_tunnels) = ACTIVE_TUNNELS.as_ref() {
-                let mut tunnels = active_tunnels.lock().unwrap();
-                let config = commands_config.lock().unwrap();
+/// This is the extern C function that Cocoa calls when the user toggles a menu item.
+/// Instead of interacting with static globals directly, we route the request to the
+/// `TunnelManager` inside the global `App` reference.
+#[no_mangle]
+pub extern "C" fn toggleTunnel(_self: &Object, _sel: Sel, item: id) {
+    // Identify if the menu item is currently active or not.
+    let state: BOOL = unsafe { msg_send![item, state] };
+    let new_state = if state == YES { NO } else { YES };
 
-                // Clear all active tunnels first to stop any running threads
-                for key in tunnels.iter() {
-                    debug!("Cleaning up tunnel for {}", key);
-                    if let Some(command) = config.get(key) {
-                        match Command::new(&command.kill_command)
-                            .args(&command.kill_args)
-                            .output()
-                        {
-                            Ok(_) => debug!("Process stopped for {}", key),
-                            Err(e) => error!("Failed to stop process for {}: {}", key, e),
-                        }
-                    }
-                }
-                tunnels.clear(); // Clear all active tunnels
-            }
-        }
+    unsafe {
+        let _: () = msg_send![item, setState: new_state];
+    }
+
+    // Extract the command key from the menu item
+    let command_id: id = unsafe { msg_send![item, representedObject] };
+    let command_str = unsafe { NSString::UTF8String(command_id) };
+    let command_key = unsafe {
+        std::ffi::CStr::from_ptr(command_str)
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    // Get a handle to the global `App`.
+    // In a real app, you'd store a reference to `App` in the handler class or in a global.
+    // For demonstration, you might have a global reference or pass it in another way.
+    if let Some(app) = crate::GLOBAL_APP.get() {
+        let enable = new_state == YES;
+        app.tunnel_manager.toggle(&command_key, enable);
     }
 }

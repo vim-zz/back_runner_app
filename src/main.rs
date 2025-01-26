@@ -18,6 +18,8 @@ mod logger;
 mod menu;
 mod tunnel;
 
+use app::App;
+
 // Expose the global App so that `toggleTunnel` can access it.
 // This is just an example—there are alternative approaches for bridging
 // global state to an Objective-C selector.
@@ -37,10 +39,6 @@ fn main() {
     logger::init_logger();
     info!("Application starting up");
 
-    // 2. Create the application data
-    let my_app = app::App::new();
-    GLOBAL_APP.set(my_app).ok().unwrap();
-
     unsafe {
         // 3. Cocoa setup
         let _pool = NSAutoreleasePool::new(nil);
@@ -52,7 +50,11 @@ fn main() {
         let handler: id = msg_send![handler_class, new];
 
         // 5. Create the status bar item with attached menu
-        let _status_item = menu::create_status_item(handler);
+        let status_item = menu::create_status_item(handler);
+        // Store the app in the global variable
+        let mut the_app = App::new();
+        the_app.set_status_item(status_item);
+        GLOBAL_APP.set(the_app).ok().unwrap();
 
         // 6. Observe application termination
         let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];

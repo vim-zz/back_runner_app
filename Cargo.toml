@@ -16,6 +16,7 @@ oslog = "0.2"
 name = "BackRunner"
 identifier = "com.1000ants.backrunner"
 icon = ["resources/rocket.icns"]
+resources = ["resources/*.png"]
 
 # [lints.rust]
 # unexpected_cfgs = { level = "warn", check-cfg = ['cfg(cargo-clippy)'] }

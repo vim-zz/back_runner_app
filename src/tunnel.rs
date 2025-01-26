@@ -52,6 +52,8 @@ impl TunnelManager {
 
             thread::spawn(move || {
                 let mut attempts = 0;
+
+                // Define closure to check if tunnel is still active
                 let is_active = || {
                     let tunnels = active_tunnels.lock().unwrap();
                     tunnels.contains(&command_key)
@@ -115,6 +117,11 @@ impl TunnelManager {
         }
     }
 
+    pub fn has_active_tunnels(&self) -> bool {
+        let tunnels = self.active_tunnels.lock().unwrap();
+        !tunnels.is_empty()
+    }
+
     /// Cleans up all tunnels when the app terminates.
     pub fn cleanup(&self) {
         let config = self.commands_config.lock().unwrap();
@@ -133,6 +140,13 @@ impl TunnelManager {
         // Clear all active
         active.clear();
         debug!("All tunnels cleaned up");
+
+        // Reset the status item icon
+        if let Some(app) = crate::GLOBAL_APP.get() {
+            if let Some(status_item) = app.get_status_item() {
+                crate::menu::update_status_item_title(status_item, false);
+            }
+        }
     }
 }
 
@@ -164,5 +178,10 @@ pub extern "C" fn toggleTunnel(_self: &Object, _sel: Sel, item: id) {
     if let Some(app) = crate::GLOBAL_APP.get() {
         let enable = new_state == YES;
         app.tunnel_manager.toggle(&command_key, enable);
+
+        // Update the status item icon if we have a reference to it
+        if let Some(status_item) = app.get_status_item() {
+            crate::menu::update_status_item_title(status_item, app.tunnel_manager.has_active_tunnels());
+        }
     }
 }

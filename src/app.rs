@@ -5,13 +5,20 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use cocoa::base::id;
 
 use crate::tunnel::{TunnelCommand, TunnelManager};
+
+// Wrapper type to make the status item thread-safe
+pub struct StatusItemWrapper(pub id);
+unsafe impl Send for StatusItemWrapper {}
+unsafe impl Sync for StatusItemWrapper {}
 
 /// Primary application structure. Contains references to any data that
 /// must be shared across modules (e.g., commands, active tunnels).
 pub struct App {
     pub tunnel_manager: TunnelManager,
+    pub status_item: Option<Arc<Mutex<StatusItemWrapper>>>,
 }
 
 impl App {
@@ -46,7 +53,20 @@ impl App {
             active_tunnels: Arc::new(Mutex::new(HashSet::new())),
         };
 
-        Self { tunnel_manager }
+        Self {
+            tunnel_manager,
+            status_item: None,
+        }
+    }
+
+    pub fn set_status_item(&mut self, item: id) {
+        self.status_item = Some(Arc::new(Mutex::new(StatusItemWrapper(item))));
+    }
+
+    pub fn get_status_item(&self) -> Option<id> {
+        self.status_item.as_ref().and_then(|wrapper| {
+            wrapper.lock().ok().map(|guard| guard.0)
+        })
     }
 
     /// Cleans up any active tunnels. Called on app termination.

@@ -13,6 +13,9 @@ use objc::{class, msg_send, sel, sel_impl};
 
 use crate::{applicationWillTerminate, tunnel::toggleTunnel};
 
+const ICON_INACTIVE: &str = "☷";
+const ICON_ACTIVE: &str = "☰";
+
 /// Registers our Objective-C class, `MenuHandler`, with the selectors
 /// for toggling tunnels and handling app termination.
 pub fn register_selector() -> *const Class {
@@ -85,11 +88,20 @@ pub fn create_status_item(handler: id) -> id {
     unsafe {
         let status_bar = NSStatusBar::systemStatusBar(nil);
         let status_item = status_bar.statusItemWithLength_(-1.0);
-        let title = NSString::alloc(nil).init_str("☰");
+
+        let title = NSString::alloc(nil).init_str(ICON_INACTIVE);
         let button: id = msg_send![status_item, button];
         let _: () = msg_send![button, setTitle: title];
 
         status_item.setMenu_(create_menu(handler));
         status_item
+    }
+}
+
+pub fn update_status_item_title(status_item: id, active: bool) {
+    unsafe {
+        let title = NSString::alloc(nil).init_str(if active { ICON_ACTIVE } else { ICON_INACTIVE });
+        let button: id = msg_send![status_item, button];
+        let _: () = msg_send![button, setTitle: title];
     }
 }

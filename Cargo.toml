@@ -1,6 +1,6 @@
 [package]
 name = "back_runner"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [dependencies]
@@ -13,9 +13,10 @@ oslog = "0.2"
 
 # Mac App Bundle configuration for the `cargo bundle` command
 [package.metadata.bundle]
-name = "BackRunner"
-identifier = "com.1000ants.backrunner"
+copyright = "Copyright (c) 2025 Ofer Affias"
 icon = ["resources/rocket.icns"]
+identifier = "com.1000ants.backrunner"
+name = "BackRunner"
 resources = ["resources/*.png"]
 
 # [lints.rust]
